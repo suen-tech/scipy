@@ -1,12 +1,14 @@
 #
 # Author: Travis Oliphant, March 2002
 #
+import warnings
 from itertools import product
 
 import numpy as np
 from numpy import (dot, diag, prod, logical_not, ravel, transpose,
                    conjugate, absolute, amax, sign, isfinite, triu)
-from numpy.lib.scimath import sqrt as csqrt
+
+from scipy._lib._util import _apply_over_batch
 
 # Local imports
 from scipy.linalg import LinAlgError, bandwidth
@@ -17,9 +19,7 @@ from ._decomp_schur import schur, rsf2csf
 from ._expm_frechet import expm_frechet, expm_cond
 from ._matfuncs_sqrtm import sqrtm
 from ._matfuncs_expm import pick_pade_structure, pade_UV_calc
-
-# deprecated imports to be removed in SciPy 1.13.0
-from numpy import single  # noqa: F401
+from ._linalg_pythran import _funm_loops  # type: ignore[import-not-found]
 
 __all__ = ['expm', 'cosm', 'sinm', 'tanm', 'coshm', 'sinhm', 'tanhm', 'logm',
            'funm', 'signm', 'sqrtm', 'fractional_matrix_power', 'expm_frechet',
@@ -87,7 +87,7 @@ def _maybe_real(A, B, tol=None):
     # Note that booleans and integers compare as real.
     if np.isrealobj(A) and np.iscomplexobj(B):
         if tol is None:
-            tol = {0:feps*1e3, 1:eps*1e6}[_array_precision[B.dtype.char]]
+            tol = {0: feps*1e3, 1: eps*1e6}[_array_precision[B.dtype.char]]
         if np.allclose(B.imag, 0.0, atol=tol):
             B = B.real
     return B
@@ -97,6 +97,7 @@ def _maybe_real(A, B, tol=None):
 # Matrix functions.
 
 
+@_apply_over_batch(('A', 2))
 def fractional_matrix_power(A, t):
     """
     Compute the fractional power of a matrix.
@@ -143,6 +144,7 @@ def fractional_matrix_power(A, t):
     return scipy.linalg._matfuncs_inv_ssq._fractional_matrix_power(A, t)
 
 
+@_apply_over_batch(('A', 2))
 def logm(A, disp=True):
     """
     Compute matrix logarithm.
@@ -155,7 +157,7 @@ def logm(A, disp=True):
     A : (N, N) array_like
         Matrix whose logarithm to evaluate
     disp : bool, optional
-        Print warning if error in the result is estimated large
+        Emit warning if error in the result is estimated large
         instead of returning estimated error. (Default: True)
 
     Returns
@@ -198,17 +200,19 @@ def logm(A, disp=True):
            [ 1.,  4.]])
 
     """
-    A = _asarray_square(A)
+    A = np.asarray(A)  # squareness checked in `_logm`
     # Avoid circular import ... this is OK, right?
     import scipy.linalg._matfuncs_inv_ssq
     F = scipy.linalg._matfuncs_inv_ssq._logm(A)
     F = _maybe_real(A, F)
     errtol = 1000*eps
-    #TODO use a better error approximation
-    errest = norm(expm(F)-A,1) / norm(A,1)
+    # TODO use a better error approximation
+    with np.errstate(divide='ignore', invalid='ignore'):
+        errest = norm(expm(F)-A, 1) / np.asarray(norm(A, 1), dtype=A.dtype).real[()]
     if disp:
         if not isfinite(errest) or errest >= errtol:
-            print("logm result may be inaccurate, approximate err =", errest)
+            message = f"logm result may be inaccurate, approximate err = {errest}"
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
         return F
     else:
         return F, errest
@@ -289,45 +293,25 @@ def expm(A):
         raise LinAlgError('The input array must be at least two-dimensional')
     if a.shape[-1] != a.shape[-2]:
         raise LinAlgError('Last 2 dimensions of the array must be square')
-    n = a.shape[-1]
+
     # Empty array
     if min(*a.shape) == 0:
-        return np.empty_like(a)
+        dtype = expm(np.eye(2, dtype=a.dtype)).dtype
+        return np.empty_like(a, dtype=dtype)
 
     # Scalar case
     if a.shape[-2:] == (1, 1):
         return np.exp(a)
 
     if not np.issubdtype(a.dtype, np.inexact):
-        a = a.astype(float)
+        a = a.astype(np.float64)
     elif a.dtype == np.float16:
         a = a.astype(np.float32)
 
-    # Explicit formula for 2x2 case, formula (2.2) in [1]
-    # without Kahan's method numerical instabilities can occur.
-    if a.shape[-2:] == (2, 2):
-        a1, a2, a3, a4 = (a[..., [0], [0]],
-                          a[..., [0], [1]],
-                          a[..., [1], [0]],
-                          a[..., [1], [1]])
-        mu = csqrt((a1-a4)**2 + 4*a2*a3)/2.  # csqrt slow but handles neg.vals
+    # An explicit formula for 2x2 case exists (formula (2.2) in [1]). However, without
+    # Kahan's method, numerical instabilities can occur (See gh-19584). Hence removed
+    # here until we have a more stable implementation.
 
-        eApD2 = np.exp((a1+a4)/2.)
-        AmD2 = (a1 - a4)/2.
-        coshMu = np.cosh(mu)
-        sinchMu = np.ones_like(coshMu)
-        mask = mu != 0
-        sinchMu[mask] = np.sinh(mu[mask]) / mu[mask]
-        eA = np.empty((a.shape), dtype=mu.dtype)
-        eA[..., [0], [0]] = eApD2 * (coshMu + AmD2*sinchMu)
-        eA[..., [0], [1]] = eApD2 * a2 * sinchMu
-        eA[..., [1], [0]] = eApD2 * a3 * sinchMu
-        eA[..., [1], [1]] = eApD2 * (coshMu - AmD2*sinchMu)
-        if np.isrealobj(a):
-            return eA.real
-        return eA
-
-    # larger problem with unspecified stacked dimensions.
     n = a.shape[-1]
     eA = np.empty(a.shape, dtype=a.dtype)
     # working memory to hold intermediate arrays
@@ -344,13 +328,26 @@ def expm(A):
 
         # Generic/triangular case; copy the slice into scratch and send.
         # Am will be mutated by pick_pade_structure
+        # If s != 0, scaled Am will be returned from pick_pade_structure.
         Am[0, :, :] = aw
         m, s = pick_pade_structure(Am)
-
-        if s != 0:  # scaling needed
-            Am[:4] *= [[[2**(-s)]], [[4**(-s)]], [[16**(-s)]], [[64**(-s)]]]
-
-        pade_UV_calc(Am, n, m)
+        if (m < 0):
+            raise MemoryError("scipy.linalg.expm could not allocate sufficient"
+                              " memory while trying to compute the Pade "
+                              f"structure (error code {m}).")
+        info = pade_UV_calc(Am, m)
+        if info != 0:
+            if info <= -11:
+                # We raise it from failed mallocs; negative LAPACK codes > -7
+                raise MemoryError("scipy.linalg.expm could not allocate "
+                              "sufficient memory while trying to compute the "
+                              f"exponential (error code {info}).")
+            else:
+                # LAPACK wrong argument error or exact singularity.
+                # Neither should happen.
+                raise RuntimeError("scipy.linalg.expm got an internal LAPACK "
+                                   "error during the exponential computation "
+                                   f"(error code {info})")
         eAw = Am[0]
 
         if s != 0:  # squaring needed
@@ -398,6 +395,7 @@ def _exp_sinch(x):
     return lexp_diff
 
 
+@_apply_over_batch(('A', 2))
 def cosm(A):
     """
     Compute the matrix cosine.
@@ -438,6 +436,7 @@ def cosm(A):
         return expm(1j*A).real
 
 
+@_apply_over_batch(('A', 2))
 def sinm(A):
     """
     Compute the matrix sine.
@@ -478,6 +477,7 @@ def sinm(A):
         return expm(1j*A).imag
 
 
+@_apply_over_batch(('A', 2))
 def tanm(A):
     """
     Compute the matrix tangent.
@@ -517,6 +517,7 @@ def tanm(A):
     return _maybe_real(A, solve(cosm(A), sinm(A)))
 
 
+@_apply_over_batch(('A', 2))
 def coshm(A):
     """
     Compute the hyperbolic matrix cosine.
@@ -556,6 +557,7 @@ def coshm(A):
     return _maybe_real(A, 0.5 * (expm(A) + expm(-A)))
 
 
+@_apply_over_batch(('A', 2))
 def sinhm(A):
     """
     Compute the hyperbolic matrix sine.
@@ -595,6 +597,7 @@ def sinhm(A):
     return _maybe_real(A, 0.5 * (expm(A) - expm(-A)))
 
 
+@_apply_over_batch(('A', 2))
 def tanhm(A):
     """
     Compute the hyperbolic matrix tangent.
@@ -634,6 +637,7 @@ def tanhm(A):
     return _maybe_real(A, solve(coshm(A), sinhm(A)))
 
 
+@_apply_over_batch(('A', 2))
 def funm(A, func, disp=True):
     """
     Evaluate a matrix function specified by a callable.
@@ -700,36 +704,25 @@ def funm(A, func, disp=True):
     A = _asarray_square(A)
     # Perform Shur decomposition (lapack ?gees)
     T, Z = schur(A)
-    T, Z = rsf2csf(T,Z)
-    n,n = T.shape
+    T, Z = rsf2csf(T, Z)
+    n, n = T.shape
     F = diag(func(diag(T)))  # apply function to diagonal elements
     F = F.astype(T.dtype.char)  # e.g., when F is real but T is complex
 
-    minden = abs(T[0,0])
+    minden = abs(T[0, 0])
 
     # implement Algorithm 11.1.1 from Golub and Van Loan
     #                 "matrix Computations."
-    for p in range(1,n):
-        for i in range(1,n-p+1):
-            j = i + p
-            s = T[i-1,j-1] * (F[j-1,j-1] - F[i-1,i-1])
-            ksl = slice(i,j-1)
-            val = dot(T[i-1,ksl],F[ksl,j-1]) - dot(F[i-1,ksl],T[ksl,j-1])
-            s = s + val
-            den = T[j-1,j-1] - T[i-1,i-1]
-            if den != 0.0:
-                s = s / den
-            F[i-1,j-1] = s
-            minden = min(minden,abs(den))
+    F, minden = _funm_loops(F, T, n, minden)
 
     F = dot(dot(Z, F), transpose(conjugate(Z)))
     F = _maybe_real(A, F)
 
-    tol = {0:feps, 1:eps}[_array_precision[F.dtype.char]]
+    tol = {0: feps, 1: eps}[_array_precision[F.dtype.char]]
     if minden == 0.0:
         minden = tol
-    err = min(1, max(tol,(tol/minden)*norm(triu(T,1),1)))
-    if prod(ravel(logical_not(isfinite(F))),axis=0):
+    err = min(1, max(tol, (tol/minden)*norm(triu(T, 1), 1)))
+    if prod(ravel(logical_not(isfinite(F))), axis=0):
         err = np.inf
     if disp:
         if err > 1000*tol:
@@ -739,6 +732,7 @@ def funm(A, func, disp=True):
         return F, err
 
 
+@_apply_over_batch(('A', 2))
 def signm(A, disp=True):
     """
     Matrix sign function.
@@ -782,7 +776,7 @@ def signm(A, disp=True):
             c = 1e3*eps*amax(x)
         return sign((absolute(rx) > c) * rx)
     result, errest = funm(A, rounded_sign, disp=0)
-    errtol = {0:1e3*feps, 1:1e3*eps}[_array_precision[result.dtype.char]]
+    errtol = {0: 1e3*feps, 1: 1e3*eps}[_array_precision[result.dtype.char]]
     if errest < errtol:
         return result
 
@@ -806,8 +800,8 @@ def signm(A, disp=True):
     for i in range(100):
         iS0 = inv(S0)
         S0 = 0.5*(S0 + iS0)
-        Pp = 0.5*(dot(S0,S0)+S0)
-        errest = norm(dot(Pp,Pp)-Pp,1)
+        Pp = 0.5*(dot(S0, S0)+S0)
+        errest = norm(dot(Pp, Pp)-Pp, 1)
         if errest < errtol or prev_errest == errest:
             break
         prev_errest = errest
@@ -819,6 +813,7 @@ def signm(A, disp=True):
         return S0, errest
 
 
+@_apply_over_batch(('a', 2), ('b', 2))
 def khatri_rao(a, b):
     r"""
     Khatri-rao product
@@ -836,10 +831,6 @@ def khatri_rao(a, b):
     -------
     c:  (n*m, k) ndarray
         Khatri-rao product of `a` and `b`.
-
-    See Also
-    --------
-    kron : Kronecker product
 
     Notes
     -----
@@ -877,6 +868,12 @@ def khatri_rao(a, b):
     if not a.shape[1] == b.shape[1]:
         raise ValueError("The number of columns for both arrays "
                          "should be equal.")
+
+    # accommodate empty arrays
+    if a.size == 0 or b.size == 0:
+        m = a.shape[0] * b.shape[0]
+        n = a.shape[1]
+        return np.empty_like(a, shape=(m, n))
 
     # c = np.vstack([np.kron(a[:, k], b[:, k]) for k in range(b.shape[1])]).T
     c = a[..., :, np.newaxis, :] * b[..., np.newaxis, :, :]

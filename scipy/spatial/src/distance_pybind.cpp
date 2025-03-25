@@ -11,8 +11,6 @@
 #include <sstream>
 #include <string>
 
-#include "npy_2_compat.h"
-
 namespace py = pybind11;
 
 namespace {
@@ -223,8 +221,7 @@ ArrayDescriptor get_descriptor(const py::array& arr) {
     const auto arr_shape = arr.shape();
     desc.shape.assign(arr_shape, arr_shape + ndim);
 
-    // TODO: Replace the following with `arr.itemsize()` this is a temporary workaround:
-    desc.element_size = PyArray_ITEMSIZE(reinterpret_cast<PyArrayObject *>(arr.ptr()));
+    desc.element_size = arr.itemsize();
     const auto arr_strides = arr.strides();
     desc.strides.assign(arr_strides, arr_strides + ndim);
     for (intptr_t i = 0; i < ndim; ++i) {
@@ -376,20 +373,7 @@ template <typename Container>
 py::array prepare_out_argument(const py::object& obj, const py::dtype& dtype,
                                const Container& out_shape) {
     if (obj.is_none()) {
-        // TODO: The strides are only passed for NumPy 2.0 transition to allow
-        //       pybind11 to catch up and can be removed at any time.  Also
-        //       remove `npy_2_compat.h` include and the `../_build_utils/src`
-        //       in meson.build.  (Same as PyArray_ITEMSIZE use above.)
-        npy_intp itemsize = PyDataType_ELSIZE((PyArray_Descr *)dtype.ptr());
-        Container strides;
-        if (strides.size() == 1) {
-            strides[0] = itemsize;
-        }
-        else {
-            strides[0] = itemsize * out_shape[1];
-            strides[1] = itemsize;
-        }
-        return py::array(dtype, out_shape, strides);
+        return py::array(dtype, out_shape);
     }
 
     if (!py::isinstance<py::array>(obj)) {
@@ -563,7 +547,7 @@ py::array cdist(const py::object& out_obj, const py::object& x_obj,
     return out;
 }
 
-PYBIND11_MODULE(_distance_pybind, m) {
+PYBIND11_MODULE(_distance_pybind, m, py::mod_gil_not_used()) {
     if (_import_array() != 0) {
         throw py::error_already_set();
     }

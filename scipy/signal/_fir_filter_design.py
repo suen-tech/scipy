@@ -3,38 +3,20 @@
 from math import ceil, log
 import operator
 import warnings
+from typing import Literal
 
 import numpy as np
 from numpy.fft import irfft, fft, ifft
 from scipy.special import sinc
 from scipy.linalg import (toeplitz, hankel, solve, LinAlgError, LinAlgWarning,
                           lstsq)
-from scipy._lib.deprecation import _NoValue, _deprecate_positional_args
 from scipy.signal._arraytools import _validate_fs
 
 from . import _sigtools
 
+
 __all__ = ['kaiser_beta', 'kaiser_atten', 'kaiserord',
-           'firwin', 'firwin2', 'remez', 'firls', 'minimum_phase']
-
-
-def _get_fs(fs, nyq):
-    """
-    Utility for replacing the argument 'nyq' (with default 1) with 'fs'.
-    """
-    if nyq is _NoValue and fs is None:
-        fs = 2
-    elif nyq is not _NoValue:
-        if fs is not None:
-            raise ValueError("Values cannot be given for both 'nyq' and 'fs'.")
-        msg = ("Keyword argument 'nyq' is deprecated in favour of 'fs' and "
-               "will be removed in SciPy 1.14.0.")
-        warnings.warn(msg, DeprecationWarning, stacklevel=3)
-        if nyq is None:
-            fs = 2
-        else:
-            fs = 2*nyq
-    return fs
+           'firwin', 'firwin2', 'firwin_2d', 'remez', 'firls', 'minimum_phase']
 
 
 # Some notes on function parameters:
@@ -256,8 +238,8 @@ def kaiserord(ripple, width):
     A = abs(ripple)  # in case somebody is confused as to what's meant
     if A < 8:
         # Formula for N is not valid in this range.
-        raise ValueError("Requested maximum ripple attenuation %f is too "
-                         "small for the Kaiser formula." % A)
+        raise ValueError("Requested maximum ripple attenuation "
+                         f"{A:f} is too small for the Kaiser formula.")
     beta = kaiser_beta(A)
 
     # Kaiser's formula (as given in Oppenheim and Schafer) is for the filter
@@ -267,9 +249,8 @@ def kaiserord(ripple, width):
     return int(ceil(numtaps)), beta
 
 
-@_deprecate_positional_args(version="1.14")
 def firwin(numtaps, cutoff, *, width=None, window='hamming', pass_zero=True,
-           scale=True, nyq=_NoValue, fs=None):
+           scale=True, fs=None):
     """
     FIR filter design using the window method.
 
@@ -289,10 +270,14 @@ def firwin(numtaps, cutoff, *, width=None, window='hamming', pass_zero=True,
         Nyquist frequency.
     cutoff : float or 1-D array_like
         Cutoff frequency of filter (expressed in the same units as `fs`)
-        OR an array of cutoff frequencies (that is, band edges). In the
-        latter case, the frequencies in `cutoff` should be positive and
-        monotonically increasing between 0 and `fs/2`. The values 0 and
-        `fs/2` must not be included in `cutoff`.
+        OR an array of cutoff frequencies (that is, band edges). In the 
+        former case, as a float, the cutoff frequency should correspond 
+        with the half-amplitude point, where the attenuation will be -6dB. 
+        In the latter case, the frequencies in `cutoff` should be positive 
+        and monotonically increasing between 0 and `fs/2`. The values 0 
+        and `fs/2` must not be included in `cutoff`. It should be noted 
+        that this is different than the behavior of `scipy.signal.iirdesign`, 
+        where the cutoff is the half-power point (-3dB).
     width : float or None, optional
         If `width` is not None, then assume it is the approximate width
         of the transition region (expressed in the same units as `fs`)
@@ -319,13 +304,6 @@ def firwin(numtaps, cutoff, *, width=None, window='hamming', pass_zero=True,
           `fs/2` (i.e the filter is a single band highpass filter);
           center of first passband otherwise
 
-    nyq : float, optional, deprecated
-        This is the Nyquist frequency. Each frequency in `cutoff` must be
-        between 0 and `nyq`. Default is 1.
-
-        .. deprecated:: 1.0.0
-           `firwin` keyword argument `nyq` is deprecated in favour of `fs` and
-           will be removed in SciPy 1.14.0.
     fs : float, optional
         The sampling frequency of the signal. Each frequency in `cutoff`
         must be between 0 and ``fs/2``.  Default is 2.
@@ -346,6 +324,7 @@ def firwin(numtaps, cutoff, *, width=None, window='hamming', pass_zero=True,
     See Also
     --------
     firwin2
+    firwin_2d
     firls
     minimum_phase
     remez
@@ -396,8 +375,9 @@ def firwin(numtaps, cutoff, *, width=None, window='hamming', pass_zero=True,
     # The major enhancements to this function added in November 2010 were
     # developed by Tom Krauss (see ticket #902).
     fs = _validate_fs(fs, allow_none=True)
+    fs = 2 if fs is None else fs
 
-    nyq = 0.5 * _get_fs(fs, nyq)
+    nyq = 0.5 * fs
 
     cutoff = np.atleast_1d(cutoff) / float(nyq)
 
@@ -492,8 +472,7 @@ def firwin(numtaps, cutoff, *, width=None, window='hamming', pass_zero=True,
 # Original version of firwin2 from scipy ticket #457, submitted by "tash".
 #
 # Rewritten by Warren Weckesser, 2010.
-@_deprecate_positional_args(version="1.14")
-def firwin2(numtaps, freq, gain, *, nfreqs=None, window='hamming', nyq=_NoValue,
+def firwin2(numtaps, freq, gain, *, nfreqs=None, window='hamming',
             antisymmetric=False, fs=None):
     """
     FIR filter design using the window method.
@@ -528,13 +507,6 @@ def firwin2(numtaps, freq, gain, *, nfreqs=None, window='hamming', nyq=_NoValue,
         Window function to use. Default is "hamming". See
         `scipy.signal.get_window` for the complete list of possible values.
         If None, no window function is applied.
-    nyq : float, optional, deprecated
-        This is the Nyquist frequency. Each frequency in `freq` must be
-        between 0 and `nyq`. Default is 1.
-
-        .. deprecated:: 1.0.0
-           `firwin2` keyword argument `nyq` is deprecated in favour of `fs` and
-           will be removed in SciPy 1.14.0.
     antisymmetric : bool, optional
         Whether resulting impulse response is symmetric/antisymmetric.
         See Notes for more details.
@@ -602,15 +574,17 @@ def firwin2(numtaps, freq, gain, *, nfreqs=None, window='hamming', nyq=_NoValue,
 
     """
     fs = _validate_fs(fs, allow_none=True)
-    nyq = 0.5 * _get_fs(fs, nyq)
+    fs = 2 if fs is None else fs
+    nyq = 0.5 * fs
 
     if len(freq) != len(gain):
         raise ValueError('freq and gain must be of same length.')
 
     if nfreqs is not None and numtaps >= nfreqs:
-        raise ValueError(('ntaps must be less than nfreqs, but firwin2 was '
-                          'called with ntaps=%d and nfreqs=%s') %
-                         (numtaps, nfreqs))
+        raise ValueError(
+            f'ntaps must be less than nfreqs, but firwin2 was called with '
+            f'ntaps={numtaps} and nfreqs={nfreqs}'
+        )
 
     if freq[0] != 0 or freq[-1] != nyq:
         raise ValueError('freq must start with 0 and end with fs/2.')
@@ -696,8 +670,7 @@ def firwin2(numtaps, freq, gain, *, nfreqs=None, window='hamming', nyq=_NoValue,
     return out
 
 
-@_deprecate_positional_args(version="1.14")
-def remez(numtaps, bands, desired, *, weight=None, Hz=_NoValue, type='bandpass',
+def remez(numtaps, bands, desired, *, weight=None, type='bandpass',
           maxiter=25, grid_density=16, fs=None):
     """
     Calculate the minimax optimal filter using the Remez exchange algorithm.
@@ -722,12 +695,6 @@ def remez(numtaps, bands, desired, *, weight=None, Hz=_NoValue, type='bandpass',
     weight : array_like, optional
         A relative weighting to give to each band region. The length of
         `weight` has to be half the length of `bands`.
-    Hz : scalar, optional, deprecated
-        The sampling frequency in Hz. Default is 1.
-
-        .. deprecated:: 1.0.0
-           `remez` keyword argument `Hz` is deprecated in favour of `fs` and
-           will be removed in SciPy 1.14.0.
     type : {'bandpass', 'differentiator', 'hilbert'}, optional
         The type of filter:
 
@@ -856,15 +823,7 @@ def remez(numtaps, bands, desired, *, weight=None, Hz=_NoValue, type='bandpass',
 
     """
     fs = _validate_fs(fs, allow_none=True)
-    if Hz is _NoValue and fs is None:
-        fs = 1.0
-    elif Hz is not _NoValue:
-        if fs is not None:
-            raise ValueError("Values cannot be given for both 'Hz' and 'fs'.")
-        msg = ("'remez' keyword argument 'Hz' is deprecated in favour of 'fs'"
-               " and will be removed in SciPy 1.14.0.")
-        warnings.warn(msg, DeprecationWarning, stacklevel=2)
-        fs = Hz
+    fs = 1.0 if fs is None else fs
 
     # Convert type
     try:
@@ -882,8 +841,7 @@ def remez(numtaps, bands, desired, *, weight=None, Hz=_NoValue, type='bandpass',
                             maxiter, grid_density)
 
 
-@_deprecate_positional_args(version="1.14")
-def firls(numtaps, bands, desired, *, weight=None, nyq=_NoValue, fs=None):
+def firls(numtaps, bands, desired, *, weight=None, fs=None):
     """
     FIR filter design using least-squares error minimization.
 
@@ -913,13 +871,6 @@ def firls(numtaps, bands, desired, *, weight=None, nyq=_NoValue, fs=None):
         A relative weighting to give to each band region when solving
         the least squares problem. `weight` has to be half the size of
         `bands`.
-    nyq : float, optional, deprecated
-        This is the Nyquist frequency. Each frequency in `bands` must be
-        between 0 and `nyq` (inclusive). Default is 1.
-
-        .. deprecated:: 1.0.0
-           `firls` keyword argument `nyq` is deprecated in favour of `fs` and
-           will be removed in SciPy 1.14.0.
     fs : float, optional
         The sampling frequency of the signal. Each frequency in `bands`
         must be between 0 and ``fs/2`` (inclusive). Default is 2.
@@ -962,7 +913,7 @@ def firls(numtaps, bands, desired, *, weight=None, nyq=_NoValue, fs=None):
     ----------
     .. [1] Ivan Selesnick, Linear-Phase Fir Filter Design By Least Squares.
            OpenStax CNX. Aug 9, 2005.
-           http://cnx.org/contents/eb1ecb35-03a9-4610-ba87-41cd771c95f2@7
+           https://eeweb.engineering.nyu.edu/iselesni/EL713/firls/firls.pdf
 
     Examples
     --------
@@ -1001,7 +952,8 @@ def firls(numtaps, bands, desired, *, weight=None, nyq=_NoValue, fs=None):
 
     """
     fs = _validate_fs(fs, allow_none=True)
-    nyq = 0.5 * _get_fs(fs, nyq)
+    fs = 2 if fs is None else fs
+    nyq = 0.5 * fs
 
     numtaps = int(numtaps)
     if numtaps % 2 == 0 or numtaps < 1:
@@ -1011,7 +963,7 @@ def firls(numtaps, bands, desired, *, weight=None, nyq=_NoValue, fs=None):
     # normalize bands 0->1 and make it 2 columns
     nyq = float(nyq)
     if nyq <= 0:
-        raise ValueError('nyq must be positive, got %s <= 0.' % nyq)
+        raise ValueError(f'nyq must be positive, got {nyq} <= 0.')
     bands = np.asarray(bands).flatten() / nyq
     if len(bands) % 2 != 0:
         raise ValueError("bands must contain frequency pairs.")
@@ -1022,8 +974,10 @@ def firls(numtaps, bands, desired, *, weight=None, nyq=_NoValue, fs=None):
     # check remaining params
     desired = np.asarray(desired).flatten()
     if bands.size != desired.size:
-        raise ValueError("desired must have one entry per frequency, got {} "
-                         "gains for {} frequencies.".format(desired.size, bands.size))
+        raise ValueError(
+            f"desired must have one entry per frequency, got {desired.size} "
+            f"gains for {bands.size} frequencies."
+        )
     desired.shape = (-1, 2)
     if (np.diff(bands) <= 0).any() or (np.diff(bands[:, 0]) < 0).any():
         raise ValueError("bands must be monotonically nondecreasing and have "
@@ -1125,7 +1079,9 @@ def _dhtm(mag):
     return recon
 
 
-def minimum_phase(h, method='homomorphic', n_fft=None):
+def minimum_phase(h: np.ndarray,
+                  method: Literal['homomorphic', 'hilbert'] = 'homomorphic',
+                  n_fft: int | None = None, *, half: bool = True) -> np.ndarray:
     """Convert a linear-phase FIR filter to minimum phase
 
     Parameters
@@ -1133,13 +1089,16 @@ def minimum_phase(h, method='homomorphic', n_fft=None):
     h : array
         Linear-phase FIR filter coefficients.
     method : {'hilbert', 'homomorphic'}
-        The method to use:
+        The provided methods are:
 
             'homomorphic' (default)
                 This method [4]_ [5]_ works best with filters with an
                 odd number of taps, and the resulting minimum phase filter
                 will have a magnitude response that approximates the square
-                root of the original filter's magnitude response.
+                root of the original filter's magnitude response using half
+                the number of taps when ``half=True`` (default), or the
+                original magnitude spectrum using the same number of taps
+                when ``half=False``.
 
             'hilbert'
                 This method [1]_ is designed to be used with equiripple
@@ -1149,12 +1108,20 @@ def minimum_phase(h, method='homomorphic', n_fft=None):
     n_fft : int
         The number of points to use for the FFT. Should be at least a
         few times larger than the signal length (see Notes).
+    half : bool
+        If ``True``, create a filter that is half the length of the original, with a
+        magnitude spectrum that is the square root of the original. If ``False``,
+        create a filter that is the same length as the original, with a magnitude
+        spectrum that is designed to match the original (only supported when
+        ``method='homomorphic'``).
+
+        .. versionadded:: 1.14.0
 
     Returns
     -------
     h_minimum : array
         The minimum-phase version of the filter, with length
-        ``(length(h) + 1) // 2``.
+        ``(len(h) + 1) // 2`` when ``half is True`` or ``len(h)`` otherwise.
 
     See Also
     --------
@@ -1185,9 +1152,8 @@ def minimum_phase(h, method='homomorphic', n_fft=None):
 
     Alternative implementations exist for creating minimum-phase filters,
     including zero inversion [2]_ and spectral factorization [3]_ [4]_.
-    For more information, see:
-
-        http://dspguru.com/dsp/howtos/how-to-design-minimum-phase-fir-filters
+    For more information, see `this DSPGuru page
+    <http://dspguru.com/dsp/howtos/how-to-design-minimum-phase-fir-filters>`__.
 
     References
     ----------
@@ -1205,49 +1171,66 @@ def minimum_phase(h, method='homomorphic', n_fft=None):
     .. [4] J. S. Lim, Advanced Topics in Signal Processing.
            Englewood Cliffs, N.J.: Prentice Hall, 1988.
     .. [5] A. V. Oppenheim, R. W. Schafer, and J. R. Buck,
-           "Discrete-Time Signal Processing," 2nd edition.
-           Upper Saddle River, N.J.: Prentice Hall, 1999.
+           "Discrete-Time Signal Processing," 3rd edition.
+           Upper Saddle River, N.J.: Pearson, 2009.
 
     Examples
     --------
-    Create an optimal linear-phase filter, then convert it to minimum phase:
+    Create an optimal linear-phase low-pass filter `h` with a transition band of
+    [0.2, 0.3] (assuming a Nyquist frequency of 1):
 
     >>> import numpy as np
     >>> from scipy.signal import remez, minimum_phase, freqz, group_delay
     >>> import matplotlib.pyplot as plt
     >>> freq = [0, 0.2, 0.3, 1.0]
     >>> desired = [1, 0]
-    >>> h_linear = remez(151, freq, desired, fs=2.)
+    >>> h_linear = remez(151, freq, desired, fs=2)
 
     Convert it to minimum phase:
 
-    >>> h_min_hom = minimum_phase(h_linear, method='homomorphic')
-    >>> h_min_hil = minimum_phase(h_linear, method='hilbert')
+    >>> h_hil = minimum_phase(h_linear, method='hilbert')
+    >>> h_hom = minimum_phase(h_linear, method='homomorphic')
+    >>> h_hom_full = minimum_phase(h_linear, method='homomorphic', half=False)
 
-    Compare the three filters:
+    Compare the impulse and frequency response of the four filters:
 
-    >>> fig, axs = plt.subplots(4, figsize=(4, 8))
-    >>> for h, style, color in zip((h_linear, h_min_hom, h_min_hil),
-    ...                            ('-', '-', '--'), ('k', 'r', 'c')):
-    ...     w, H = freqz(h)
-    ...     w, gd = group_delay((h, 1))
-    ...     w /= np.pi
-    ...     axs[0].plot(h, color=color, linestyle=style)
-    ...     axs[1].plot(w, np.abs(H), color=color, linestyle=style)
-    ...     axs[2].plot(w, 20 * np.log10(np.abs(H)), color=color, linestyle=style)
-    ...     axs[3].plot(w, gd, color=color, linestyle=style)
-    >>> for ax in axs:
-    ...     ax.grid(True, color='0.5')
-    ...     ax.fill_between(freq[1:3], *ax.get_ylim(), color='#ffeeaa', zorder=1)
-    >>> axs[0].set(xlim=[0, len(h_linear) - 1], ylabel='Amplitude', xlabel='Samples')
-    >>> axs[1].legend(['Linear', 'Min-Hom', 'Min-Hil'], title='Phase')
-    >>> for ax, ylim in zip(axs[1:], ([0, 1.1], [-150, 10], [-60, 60])):
-    ...     ax.set(xlim=[0, 1], ylim=ylim, xlabel='Frequency')
-    >>> axs[1].set(ylabel='Magnitude')
-    >>> axs[2].set(ylabel='Magnitude (dB)')
-    >>> axs[3].set(ylabel='Group delay')
-    >>> plt.tight_layout()
+    >>> fig0, ax0 = plt.subplots(figsize=(6, 3), tight_layout=True)
+    >>> fig1, axs = plt.subplots(3, sharex='all', figsize=(6, 6), tight_layout=True)
+    >>> ax0.set_title("Impulse response")
+    >>> ax0.set(xlabel='Samples', ylabel='Amplitude', xlim=(0, len(h_linear) - 1))
+    >>> axs[0].set_title("Frequency Response")
+    >>> axs[0].set(xlim=(0, .65), ylabel="Magnitude / dB")
+    >>> axs[1].set(ylabel="Phase / rad")
+    >>> axs[2].set(ylabel="Group Delay / samples", ylim=(-31, 81),
+    ...             xlabel='Normalized Frequency (Nyqist frequency: 1)')
+    >>> for h, lb in ((h_linear,   f'Linear ({len(h_linear)})'),
+    ...               (h_hil,      f'Min-Hilbert ({len(h_hil)})'),
+    ...               (h_hom,      f'Min-Homomorphic ({len(h_hom)})'),
+    ...               (h_hom_full, f'Min-Homom. Full ({len(h_hom_full)})')):
+    ...     w_H, H = freqz(h, fs=2)
+    ...     w_gd, gd = group_delay((h, 1), fs=2)
+    ...
+    ...     alpha = 1.0 if lb == 'linear' else 0.5  # full opacity for 'linear' line
+    ...     ax0.plot(h, '.-', alpha=alpha, label=lb)
+    ...     axs[0].plot(w_H, 20 * np.log10(np.abs(H)), alpha=alpha)
+    ...     axs[1].plot(w_H, np.unwrap(np.angle(H)), alpha=alpha, label=lb)
+    ...     axs[2].plot(w_gd, gd, alpha=alpha)
+    >>> ax0.grid(True)
+    >>> ax0.legend(title='Filter Phase (Order)')
+    >>> axs[1].legend(title='Filter Phase (Order)', loc='lower right')
+    >>> for ax_ in axs:  # shade transition band:
+    ...     ax_.axvspan(freq[1], freq[2], color='y', alpha=.25)
+    ...     ax_.grid(True)
+    >>> plt.show()
 
+    The impulse response and group delay plot depict the 75 sample delay of the linear
+    phase filter `h`. The phase should also be linear in the stop band--due to the small
+    magnitude, numeric noise dominates there. Furthermore, the plots show that the
+    minimum phase filters clearly show a reduced (negative) phase slope in the pass and
+    transition band. The plots also illustrate that the filter with parameters
+    ``method='homomorphic', half=False`` has same order and magnitude response as the
+    linear filter `h` whereas the other minimum phase filters have only half the order
+    and the square root  of the magnitude response.
     """
     h = np.asarray(h)
     if np.iscomplexobj(h):
@@ -1261,11 +1244,13 @@ def minimum_phase(h, method='homomorphic', n_fft=None):
     if not isinstance(method, str) or method not in \
             ('homomorphic', 'hilbert',):
         raise ValueError(f'method must be "homomorphic" or "hilbert", got {method!r}')
+    if method == "hilbert" and not half:
+        raise ValueError("`half=False` is only supported when `method='homomorphic'`")
     if n_fft is None:
         n_fft = 2 ** int(np.ceil(np.log2(2 * (len(h) - 1) / 0.01)))
     n_fft = int(n_fft)
     if n_fft < len(h):
-        raise ValueError('n_fft must be at least len(h)==%s' % len(h))
+        raise ValueError(f'n_fft must be at least len(h)=={len(h)}')
     if method == 'hilbert':
         w = np.arange(n_fft) * (2 * np.pi / n_fft * n_half)
         H = np.real(fft(h, n_fft) * np.exp(1j * w))
@@ -1283,19 +1268,167 @@ def minimum_phase(h, method='homomorphic', n_fft=None):
         # take 0.25*log(|H|**2) = 0.5*log(|H|)
         h_temp += 1e-7 * h_temp[h_temp > 0].min()  # don't let log blow up
         np.log(h_temp, out=h_temp)
-        h_temp *= 0.5
+        if half:  # halving of magnitude spectrum optional
+            h_temp *= 0.5
         # IDFT
         h_temp = ifft(h_temp).real
         # multiply pointwise by the homomorphic filter
         # lmin[n] = 2u[n] - d[n]
+        # i.e., double the positive frequencies and zero out the negative ones;
+        # Oppenheim+Shafer 3rd ed p991 eq13.42b and p1004 fig13.7
         win = np.zeros(n_fft)
         win[0] = 1
-        stop = (len(h) + 1) // 2
+        stop = n_fft // 2
         win[1:stop] = 2
-        if len(h) % 2:
+        if n_fft % 2:
             win[stop] = 1
         h_temp *= win
         h_temp = ifft(np.exp(fft(h_temp)))
         h_minimum = h_temp.real
-    n_out = n_half + len(h) % 2
+    n_out = (n_half + len(h) % 2) if half else len(h)
     return h_minimum[:n_out]
+
+
+def firwin_2d(hsize, window, *, fc=None, fs=2, circular=False,
+              pass_zero=True, scale=True):
+    """
+    2D FIR filter design using the window method.
+
+    This function computes the coefficients of a 2D finite impulse response
+    filter. The filter is separable with linear phase; it will be designed
+    as a product of two 1D filters with dimensions defined by `hsize`.
+    Additionally, it can create approximately circularly symmetric 2-D windows.
+    
+    Parameters
+    ----------
+    hsize : tuple or list of length 2
+        Lengths of the filter in each dimension. `hsize[0]` specifies the
+        number of coefficients in the row direction and `hsize[1]` specifies
+        the number of coefficients in the column direction.
+    window : tuple or list of length 2 or string
+        Desired window to use for each 1D filter or a single window type 
+        for creating circularly symmetric 2-D windows. Each element should be
+        a string or tuple of string and parameter values. See
+        `~scipy.signal.get_window` for a list of windows and required
+        parameters.
+    fc : float or 1-D array_like, optional
+        Cutoff frequency of the filter in the same units as `fs`. This defines
+        the frequency at which the filter's gain drops to approximately -6 dB
+        (half power) in a low-pass or high-pass filter. For multi-band filters,
+        `fc` can be an array of cutoff frequencies (i.e., band edges) in the 
+        range [0, fs/2], with each band specified in pairs. Required if 
+        `circular` is False.
+    fs : float, optional
+        The sampling frequency of the signal. Default is 2.
+    circular : bool, optional
+        Whether to create a circularly symmetric 2-D window. Default is ``False``.
+    pass_zero : {True, False, 'bandpass', 'lowpass', 'highpass', 'bandstop'}, optional
+        This parameter is directly passed to `firwin` for each scalar frequency axis.
+        Hence, if ``True``, the DC gain, i.e., the gain at frequency (0, 0), is 1.
+        If ``False``, the DC gain is 0 at frequency (0, 0) if `circular` is ``True``. 
+        If `circular` is ``False`` the frequencies (0, f1) and (f0, 0) will
+        have gain 0.
+        It can also be a string argument for the desired filter type 
+        (equivalent to ``btype`` in IIR design functions).
+    scale : bool, optional
+        This parameter is directly passed to `firwin` for each scalar frequency axis.
+        Set to ``True`` to scale the coefficients so that the frequency
+        response is exactly unity at a certain frequency on one frequency axis.
+        That frequency is either:
+        
+        - 0 (DC) if the first passband starts at 0 (i.e. pass_zero is ``True``)
+        - `fs`/2 (the Nyquist frequency) if the first passband ends at `fs`/2
+          (i.e., the filter is a single band highpass filter);
+          center of first passband otherwise
+
+    Returns
+    -------
+    filter_2d : (hsize[0], hsize[1]) ndarray
+        Coefficients of 2D FIR filter.
+
+    Raises
+    ------
+    ValueError
+        - If `hsize` and `window` are not 2-element tuples or lists.
+        - If `cutoff` is None when `circular` is True.
+        - If `cutoff` is outside the range [0, `fs`/2] and `circular` is ``False``.
+        - If any of the elements in `window` are not recognized.
+    RuntimeError
+        If `firwin` fails to converge when designing the filter.
+
+    See Also
+    --------
+    firwin: FIR filter design using the window method for 1d arrays.
+    get_window: Return a window of a given length and type.
+
+    Examples
+    --------
+    Generate a 5x5 low-pass filter with cutoff frequency 0.1:
+
+    >>> import numpy as np
+    >>> from scipy.signal import get_window
+    >>> from scipy.signal import firwin_2d
+    >>> hsize = (5, 5)
+    >>> window = (("kaiser", 5.0), ("kaiser", 5.0))
+    >>> fc = 0.1
+    >>> filter_2d = firwin_2d(hsize, window, fc=fc)
+    >>> filter_2d
+    array([[0.00025366, 0.00401662, 0.00738617, 0.00401662, 0.00025366],
+           [0.00401662, 0.06360159, 0.11695714, 0.06360159, 0.00401662],
+           [0.00738617, 0.11695714, 0.21507283, 0.11695714, 0.00738617],
+           [0.00401662, 0.06360159, 0.11695714, 0.06360159, 0.00401662],
+           [0.00025366, 0.00401662, 0.00738617, 0.00401662, 0.00025366]])
+
+    Generate a circularly symmetric 5x5 low-pass filter with Hamming window:
+
+    >>> filter_2d = firwin_2d((5, 5), 'hamming', fc=fc, circular=True)
+    >>> filter_2d
+    array([[-0.00020354, -0.00020354, -0.00020354, -0.00020354, -0.00020354],
+           [-0.00020354,  0.01506844,  0.09907658,  0.01506844, -0.00020354],
+           [-0.00020354,  0.09907658, -0.00020354,  0.09907658, -0.00020354],
+           [-0.00020354,  0.01506844,  0.09907658,  0.01506844, -0.00020354],
+           [-0.00020354, -0.00020354, -0.00020354, -0.00020354, -0.00020354]])
+
+    Generate Plots comparing the product of two 1d filters with a circular
+    symmetric filter:
+
+    >>> import matplotlib.pyplot as plt
+    >>> hsize, fc = (50, 50), 0.05
+    >>> window = (("kaiser", 5.0), ("kaiser", 5.0))
+    >>> filter0_2d = firwin_2d(hsize, window, fc=fc)
+    >>> filter1_2d = firwin_2d((50, 50), 'hamming', fc=fc, circular=True)
+    ...
+    >>> fg, (ax0, ax1) = plt.subplots(1, 2, tight_layout=True, figsize=(6.5, 3.5))
+    >>> ax0.set_title("Product of 2 Windows")
+    >>> im0 = ax0.imshow(filter0_2d, cmap='viridis', origin='lower', aspect='equal')
+    >>> fg.colorbar(im0, ax=ax0, shrink=0.7)
+    >>> ax1.set_title("Circular Window")
+    >>> im1 = ax1.imshow(filter1_2d, cmap='plasma', origin='lower', aspect='equal')
+    >>> fg.colorbar(im1, ax=ax1, shrink=0.7)
+    >>> plt.show()
+    """
+    if len(hsize) != 2:
+            raise ValueError("hsize must be a 2-element tuple or list")
+
+    if circular:
+        if fc is None:
+            raise ValueError("Cutoff frequency `fc` must be "
+                             "provided when `circular` is True")
+        
+        n_r = max(hsize[0], hsize[1]) * 8  # oversample 1d window by factor 8
+        
+        win_r = firwin(n_r, cutoff=fc, window=window, fs=fs)
+
+        f1, f2 = np.meshgrid(np.linspace(-1, 1, hsize[0]), np.linspace(-1, 1, hsize[1]))
+        r = np.sqrt(f1**2 + f2**2)
+
+        win_2d = np.interp(r, np.linspace(0, 1, n_r), win_r)
+        return win_2d
+
+    if len(window) != 2:
+        raise ValueError("window must be a 2-element tuple or list")
+
+    row_filter = firwin(hsize[0], cutoff=fc, window=window[0], fs=fs)
+    col_filter = firwin(hsize[1], cutoff=fc, window=window[1], fs=fs)
+
+    return np.outer(row_filter, col_filter)

@@ -8,7 +8,7 @@ _spatial_pxd = [
 spt_cython_gen = generator(cython,
   arguments : cython_args,
   output : '@BASENAME@.c',
-  depends : [_cython_tree, _spatial_pxd, _lib_pxd])
+  depends : [_cython_tree, _spatial_pxd, _lib_pxd, cython_lapack_pxd])
 
 qhull_src = [
   'qhull_src/src/geom2_r.c',
@@ -40,7 +40,7 @@ py3.extension_module('_qhull',
     'qhull_src/src'
   ],
   link_args: version_link_args,
-  dependencies: [lapack, np_dep],
+  dependencies: [np_dep],
   install: true,
   subdir: 'scipy/spatial'
 )
@@ -80,7 +80,7 @@ py3.extension_module('_distance_wrap',
 
 py3.extension_module('_distance_pybind',
   ['src/distance_pybind.cpp'],
-  include_directories: ['src/', '../_build_utils/src'],
+  include_directories: ['src/'],
   dependencies: [np_dep, pybind11_dep],
   link_args: version_link_args,
   install: true,
@@ -112,7 +112,6 @@ py3.install_sources([
 )
 
 py3.install_sources([
-    '_ckdtree.pyi',
     '_qhull.pyi',
     '_voronoi.pyi',
     'distance.pyi'
